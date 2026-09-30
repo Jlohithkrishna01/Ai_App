@@ -9,6 +9,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (credentials: any) => Promise<void>;
   signup: (data: any) => Promise<void>;
+  loginAsGuest: () => void;
   logout: () => void;
   updateUser: (user: User) => void;
   refreshUser: () => Promise<void>;
@@ -25,6 +26,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const currentToken = getToken();
     if (!currentToken) {
       setUser(null);
+      setIsLoading(false);
+      return;
+    }
+    if (currentToken === 'demo-guest-token') {
+      setUser({
+        id: 9999,
+        email: 'guest@lumiq.ai',
+        name: 'Guest Explorer',
+        bio: 'Exploring LUMIQ AI in interactive Demo Mode on GitHub Pages.',
+        profile_image: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
       setIsLoading(false);
       return;
     }
@@ -59,11 +73,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(res.user);
   };
 
+  const loginAsGuest = () => {
+    const guestUser: User = {
+      id: 9999,
+      email: 'guest@lumiq.ai',
+      name: 'Guest Explorer',
+      bio: 'Exploring LUMIQ AI in interactive Demo Mode on GitHub Pages.',
+      profile_image: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const guestToken = 'demo-guest-token';
+    setToken(guestToken);
+    setTokenState(guestToken);
+    setUser(guestUser);
+  };
+
   const logout = () => {
     removeToken();
     setTokenState(null);
     setUser(null);
-    window.location.href = '/login';
+    const loginPath = `${import.meta.env.BASE_URL}login`;
+    window.location.href = loginPath;
   };
 
   const updateUser = (updated: User) => {
@@ -79,6 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         login,
         signup,
+        loginAsGuest,
         logout,
         updateUser,
         refreshUser,

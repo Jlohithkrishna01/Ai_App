@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, ArrowRight, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/common/Logo';
 import { ThemeToggle } from '../components/common/ThemeToggle';
 
 export const SignupPage: React.FC = () => {
-  const { signup } = useAuth();
+  const { signup, loginAsGuest } = useAuth();
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
@@ -185,6 +185,30 @@ export const SignupPage: React.FC = () => {
               )}
             </button>
           </form>
+
+          {/* Guest / Demo Mode Button */}
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200 dark:border-dark-border" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-white dark:bg-dark-surface px-2.5 text-gray-400 font-medium">
+                Or explore without backend
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              loginAsGuest();
+              navigate('/');
+            }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-primary-500/40 hover:border-primary-500 bg-primary-50/50 dark:bg-primary-950/20 hover:bg-primary-100/60 dark:hover:bg-primary-900/30 text-primary-700 dark:text-primary-300 font-medium text-xs transition-all shadow-sm"
+          >
+            <Sparkles className="w-4 h-4 text-amber-500" />
+            <span>⚡ Try Demo Mode (Instant Browser Access)</span>
+          </button>
 
           <div className="mt-6 text-center text-xs text-gray-500 dark:text-gray-400">
             Already have an account?{' '}

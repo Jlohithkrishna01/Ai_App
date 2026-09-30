@@ -42,35 +42,123 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+    });
+  } catch (err: any) {
+    const isGH = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
+    if (isGH) {
+      throw new ApiError(
+        'Backend server is not running on GitHub Pages (static host). Click "Try Demo Mode" below to explore without a backend!',
+        0
+      );
+    }
+    throw new ApiError(
+      'Cannot connect to backend server. Please make sure the backend is running on http://127.0.0.1:8000 (run start-all.bat).',
+      0
+    );
+  }
 
   if (response.status === 401) {
     removeToken();
-    if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/signup')) {
-      window.location.href = '/login?expired=true';
+    const loginPath = `${import.meta.env.BASE_URL}login`;
+    if (!window.location.pathname.includes('/login') && !window.location.pathname.includes('/signup')) {
+      window.location.href = `${loginPath}?expired=true`;
     }
   }
 
   if (!response.ok) {
     let errorMsg = 'An unexpected error occurred.';
-    try {
-      const errorData = await response.json();
-      errorMsg = errorData.detail || errorData.message || errorMsg;
-    } catch {
-      errorMsg = response.statusText || errorMsg;
+    const isGH = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
+    if (response.status === 404 && isGH) {
+      errorMsg = 'Backend API is not hosted on GitHub Pages (static hosting). Click "Try Demo Mode" below to explore!';
+    } else if (response.status === 404) {
+      errorMsg = 'API endpoint not found (404). Please ensure the backend is running.';
+    } else {
+      try {
+        const errorData = await response.json();
+        errorMsg = errorData.detail || errorData.message || errorMsg;
+      } catch {
+        errorMsg = response.statusText || `Request failed (${response.status})`;
+      }
     }
     throw new ApiError(errorMsg, response.status);
   }
 
-  // If response is 204 No Content
   if (response.status === 204) {
     return {} as T;
   }
 
   return response.json();
+}
+
+// -------------------------------------------------------------
+// Interactive Demo Mode Support (for GitHub Pages & offline preview)
+// -------------------------------------------------------------
+const DEMO_STORAGE_KEY = 'lumiq_demo_conversations';
+const DEMO_SETTINGS_KEY = 'lumiq_demo_settings';
+
+interface DemoConvData {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: Array<{
+    id: number;
+    conversation_id: number;
+    role: 'user' | 'assistant';
+    content: string;
+    file_name?: string | null;
+    file_url?: string | null;
+    file_type?: string | null;
+    created_at: string;
+    sources?: Source[];
+  }>;
+}
+
+function getDemoConversations(): DemoConvData[] {
+  try {
+    const raw = localStorage.getItem(DEMO_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+
+  const defaultConv: DemoConvData = {
+    id: 1,
+    title: 'Welcome to LUMIQ AI 👋',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    messages: [
+      {
+        id: 101,
+        conversation_id: 1,
+        role: 'assistant',
+        content: `### Welcome to LUMIQ AI! 🚀\n\nYou are running in **Interactive Demo Mode** directly in your browser on GitHub Pages.\n\nHere are some of the features you can explore:\n- **Real-Time Streaming**: Natural, smooth AI conversation simulation.\n- **Syntax Highlighted Code**: Rich rendering for Python, JavaScript, TypeScript, SQL, and more.\n- **Web Search Citations**: Live source cards and references.\n- **Document Intelligence**: Upload files and query their contents.\n- **Theme Switcher**: Switch between Light, Dark, and System modes using the top-right toggle.\n\nAsk me anything or select a suggestion card below to get started!`,
+        created_at: new Date().toISOString(),
+        sources: [
+          {
+            title: 'LUMIQ AI GitHub Repository',
+            url: 'https://github.com/Jlohithkrishna01/Ai_App',
+            source_name: 'GitHub',
+            snippet: 'Production-grade intelligent AI chatbot inspired by ChatGPT.',
+          },
+        ],
+      },
+    ],
+  };
+
+  try {
+    localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify([defaultConv]));
+  } catch {}
+  return [defaultConv];
+}
+
+function saveDemoConversations(convs: DemoConvData[]) {
+  try {
+    localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(convs));
+  } catch {}
 }
 
 export const api = {
@@ -90,6 +178,9 @@ export const api = {
   },
 
   async forgotPassword(email: string): Promise<{ message: string; reset_token?: string; reset_url?: string }> {
+    if (getToken() === 'demo-guest-token') {
+      return { message: 'Demo Mode: Password reset link simulated.' };
+    }
     return request('/auth/forgot-password', {
       method: 'POST',
       body: JSON.stringify({ email }),
@@ -97,6 +188,9 @@ export const api = {
   },
 
   async resetPassword(data: any): Promise<{ message: string }> {
+    if (getToken() === 'demo-guest-token') {
+      return { message: 'Demo Mode: Password has been reset.' };
+    }
     return request('/auth/reset-password', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -104,15 +198,56 @@ export const api = {
   },
 
   async getMe(): Promise<User> {
+    if (getToken() === 'demo-guest-token') {
+      return {
+        id: 9999,
+        email: 'guest@lumiq.ai',
+        name: 'Guest Explorer',
+        bio: 'Exploring LUMIQ AI in interactive Demo Mode on GitHub Pages.',
+        profile_image: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    }
     return request('/auth/me');
   },
 
   // Users & Profile
   async getProfile(): Promise<{ user: User; stats: UserStats }> {
+    if (getToken() === 'demo-guest-token') {
+      const convs = getDemoConversations();
+      const totalMsgs = convs.reduce((acc, c) => acc + c.messages.length, 0);
+      return {
+        user: {
+          id: 9999,
+          email: 'guest@lumiq.ai',
+          name: 'Guest Explorer',
+          bio: 'Exploring LUMIQ AI in interactive Demo Mode on GitHub Pages.',
+          profile_image: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        stats: {
+          conversation_count: convs.length,
+          message_count: totalMsgs,
+        },
+      };
+    }
     return request('/users/profile');
   },
 
   async updateProfile(data: { name?: string; bio?: string }): Promise<User> {
+    if (getToken() === 'demo-guest-token') {
+      return {
+        id: 9999,
+        email: 'guest@lumiq.ai',
+        name: data.name || 'Guest Explorer',
+        bio: data.bio || 'Exploring LUMIQ AI in interactive Demo Mode on GitHub Pages.',
+        profile_image: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    }
     return request('/users/profile', {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -120,6 +255,17 @@ export const api = {
   },
 
   async uploadAvatar(file: File): Promise<User> {
+    if (getToken() === 'demo-guest-token') {
+      return {
+        id: 9999,
+        email: 'guest@lumiq.ai',
+        name: 'Guest Explorer',
+        bio: 'Exploring LUMIQ AI in interactive Demo Mode on GitHub Pages.',
+        profile_image: URL.createObjectURL(file),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    }
     const formData = new FormData();
     formData.append('file', file);
     return request('/users/avatar', {
@@ -129,6 +275,9 @@ export const api = {
   },
 
   async changePassword(data: any): Promise<{ message: string }> {
+    if (getToken() === 'demo-guest-token') {
+      return { message: 'Demo Mode: Password changed successfully.' };
+    }
     return request('/users/change-password', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -137,15 +286,44 @@ export const api = {
 
   // Conversations
   async getConversations(searchTerm?: string): Promise<Conversation[]> {
+    if (getToken() === 'demo-guest-token') {
+      const convs = getDemoConversations();
+      if (searchTerm) {
+        const q = searchTerm.toLowerCase();
+        return convs
+          .filter((c) => c.title.toLowerCase().includes(q))
+          .map(({ id, title, created_at, updated_at }) => ({ id, title, created_at, updated_at }));
+      }
+      return convs.map(({ id, title, created_at, updated_at }) => ({ id, title, created_at, updated_at }));
+    }
     const query = searchTerm ? `?q=${encodeURIComponent(searchTerm)}` : '';
     return request(`/chats${query}`);
   },
 
   async getConversation(id: number): Promise<ConversationDetail> {
+    if (getToken() === 'demo-guest-token') {
+      const convs = getDemoConversations();
+      const found = convs.find((c) => c.id === id);
+      if (!found) throw new ApiError('Conversation not found', 404);
+      return found as ConversationDetail;
+    }
     return request(`/chats/${id}`);
   },
 
   async createConversation(title?: string): Promise<Conversation> {
+    if (getToken() === 'demo-guest-token') {
+      const convs = getDemoConversations();
+      const newConv: DemoConvData = {
+        id: Date.now(),
+        title: title || 'New Chat',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        messages: [],
+      };
+      convs.unshift(newConv);
+      saveDemoConversations(convs);
+      return { id: newConv.id, title: newConv.title, created_at: newConv.created_at, updated_at: newConv.updated_at };
+    }
     return request('/chats', {
       method: 'POST',
       body: JSON.stringify({ title: title || 'New Chat' }),
@@ -153,6 +331,17 @@ export const api = {
   },
 
   async updateConversation(id: number, title: string): Promise<Conversation> {
+    if (getToken() === 'demo-guest-token') {
+      const convs = getDemoConversations();
+      const c = convs.find((item) => item.id === id);
+      if (c) {
+        c.title = title;
+        c.updated_at = new Date().toISOString();
+        saveDemoConversations(convs);
+        return { id: c.id, title: c.title, created_at: c.created_at, updated_at: c.updated_at };
+      }
+      throw new ApiError('Conversation not found', 404);
+    }
     return request(`/chats/${id}`, {
       method: 'PUT',
       body: JSON.stringify({ title }),
@@ -160,12 +349,22 @@ export const api = {
   },
 
   async deleteConversation(id: number): Promise<{ message: string }> {
+    if (getToken() === 'demo-guest-token') {
+      let convs = getDemoConversations();
+      convs = convs.filter((c) => c.id !== id);
+      saveDemoConversations(convs);
+      return { message: 'Conversation deleted' };
+    }
     return request(`/chats/${id}`, {
       method: 'DELETE',
     });
   },
 
   async clearAllConversations(): Promise<{ message: string }> {
+    if (getToken() === 'demo-guest-token') {
+      saveDemoConversations([]);
+      return { message: 'All conversations cleared' };
+    }
     return request('/chats', {
       method: 'DELETE',
     });
@@ -173,6 +372,15 @@ export const api = {
 
   // Files
   async uploadFile(file: File): Promise<UploadedFileInfo> {
+    if (getToken() === 'demo-guest-token') {
+      return {
+        file_name: file.name,
+        file_url: URL.createObjectURL(file),
+        file_type: file.type || 'text/plain',
+        file_size: file.size || 1024,
+        extracted_text: `Demo extracted content from attached file: ${file.name}`,
+      };
+    }
     const formData = new FormData();
     formData.append('file', file);
     return request('/files/upload', {
@@ -183,10 +391,34 @@ export const api = {
 
   // Settings
   async getSettings(): Promise<UserSettings> {
+    if (getToken() === 'demo-guest-token') {
+      try {
+        const saved = localStorage.getItem(DEMO_SETTINGS_KEY);
+        if (saved) return JSON.parse(saved);
+      } catch {}
+      return {
+        theme: 'system',
+        enter_to_send: true,
+        show_timestamps: true,
+        default_model: 'qwen/qwen3.8-27b',
+        system_prompt: null,
+      };
+    }
     return request('/settings');
   },
 
   async updateSettings(data: Partial<UserSettings>): Promise<UserSettings> {
+    if (getToken() === 'demo-guest-token') {
+      const current = await this.getSettings();
+      const updated: UserSettings = {
+        ...current,
+        ...data,
+      };
+      try {
+        localStorage.setItem(DEMO_SETTINGS_KEY, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    }
     return request('/settings', {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -194,6 +426,12 @@ export const api = {
   },
 
   async deleteAccount(password: string): Promise<{ message: string }> {
+    if (getToken() === 'demo-guest-token') {
+      localStorage.removeItem(DEMO_STORAGE_KEY);
+      localStorage.removeItem(DEMO_SETTINGS_KEY);
+      removeToken();
+      return { message: 'Demo mode reset' };
+    }
     return request('/settings/account', {
       method: 'DELETE',
       body: JSON.stringify({ password }),
@@ -224,24 +462,139 @@ export const api = {
   ): Promise<void> {
     const token = getToken();
 
+    // In Demo Mode: simulate realistic streaming responses
+    if (token === 'demo-guest-token') {
+      return new Promise(async (resolve) => {
+        const convs = getDemoConversations();
+        const convId: number = payload.conversation_id || Date.now();
+        let targetConv = convs.find((c) => c.id === convId);
+
+        if (!targetConv) {
+          targetConv = {
+            id: convId,
+            title: payload.content.slice(0, 30) || 'Demo Chat',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            messages: [],
+          };
+          convs.unshift(targetConv);
+        }
+
+        const userMsgId = Date.now();
+        targetConv.messages.push({
+          id: userMsgId,
+          conversation_id: convId,
+          role: 'user',
+          content: payload.content,
+          file_name: payload.file_name,
+          file_url: payload.file_url,
+          file_type: payload.file_type,
+          created_at: new Date().toISOString(),
+        });
+        saveDemoConversations(convs);
+
+        callbacks.onInit?.({
+          conversation_id: convId,
+          title: targetConv.title,
+          user_message_id: userMsgId,
+        });
+
+        if (payload.enable_web_search) {
+          callbacks.onStatus?.('Searching the web for verified sources...');
+          await new Promise((r) => setTimeout(r, 600));
+          callbacks.onSources?.([
+            {
+              title: 'Live Information Synthesis',
+              url: 'https://github.com/Jlohithkrishna01/Ai_App',
+              source_name: 'DuckDuckGo Web',
+              snippet: 'Real-time search results synthesized into assistant response.',
+            },
+          ]);
+          callbacks.onStatus?.('Synthesizing search results...');
+          await new Promise((r) => setTimeout(r, 400));
+        }
+
+        callbacks.onStatus?.('Generating response...');
+
+        let demoResponseText = `Thank you for your message! Here is an answer to your request:\n\n> "${payload.content}"\n\n### LUMIQ AI Capabilities Demo\nHere is a code example highlighting Markdown and syntax highlighting:\n\n\`\`\`typescript\n// Fast token streaming & context management\ninterface ChatState {\n  conversationId: number;\n  tokens: string[];\n  status: 'ready' | 'generating';\n}\n\nexport function calculateThroughput(tokens: number, seconds: number): number {\n  return Math.round(tokens / seconds);\n}\n\`\`\`\n\n- **Real-Time Streaming**: Tokens stream dynamically to your screen\n- **Markdown & Code**: Full formatting and syntax highlighting\n- **Web Search**: Dynamic citation cards and links\n- **Theme Support**: Seamless Light/Dark/System modes\n\n*Note*: You are in browser Demo Mode. To connect the real Groq AI backend and MySQL database, simply run **\`start-all.bat\`** on your machine or deploy the FastAPI backend!`;
+
+        if (payload.file_name) {
+          demoResponseText = `I have received and analyzed your document **${payload.file_name}**.\n\n### Document Summary\n- **Filename**: \`${payload.file_name}\`\n- **Status**: Processed successfully\n\nBased on your query: "${payload.content}", everything looks great! Feel free to ask specific questions about your document.`;
+        }
+
+        const words = demoResponseText.split(/(\s+)/);
+        for (const word of words) {
+          if (signal?.aborted) break;
+          callbacks.onToken?.(word);
+          await new Promise((r) => setTimeout(r, 15));
+        }
+
+        const aiMsgId = Date.now() + 1;
+        const demoSources: Source[] = payload.enable_web_search
+          ? [
+              {
+                title: 'Live Information Synthesis',
+                url: 'https://github.com/Jlohithkrishna01/Ai_App',
+                source_name: 'DuckDuckGo Web',
+                snippet: 'Real-time search results synthesized into assistant response.',
+              },
+            ]
+          : [];
+
+        targetConv.messages.push({
+          id: aiMsgId,
+          conversation_id: convId,
+          role: 'assistant',
+          content: demoResponseText,
+          created_at: new Date().toISOString(),
+          sources: demoSources,
+        });
+        saveDemoConversations(convs);
+
+        callbacks.onDone?.({
+          conversation_id: convId,
+          message_id: aiMsgId,
+          title: targetConv.title,
+          sources: demoSources,
+        });
+        resolve();
+      });
+    }
+
     return new Promise(async (resolve, reject) => {
       try {
-        const response = await fetch(`${API_BASE}/ai/chat/stream`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify(payload),
-          signal,
-        });
+        let response: Response;
+        try {
+          response = await fetch(`${API_BASE}/ai/chat/stream`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(payload),
+            signal,
+          });
+        } catch (fetchErr: any) {
+          const isGH = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
+          const errorMsg = isGH
+            ? 'Backend not connected on GitHub Pages. Try Demo Mode or connect a live cloud backend!'
+            : 'Cannot connect to backend server. Make sure the backend is running on http://127.0.0.1:8000.';
+          callbacks.onError?.(errorMsg);
+          reject(new Error(errorMsg));
+          return;
+        }
 
         if (!response.ok) {
           let errorMsg = 'Failed to connect to AI stream.';
-          try {
-            const err = await response.json();
-            errorMsg = err.detail || errorMsg;
-          } catch {}
+          const isGH = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
+          if (response.status === 404 && isGH) {
+            errorMsg = 'Backend API is not hosted on GitHub Pages. Switch to Demo Mode to test chat in the browser!';
+          } else {
+            try {
+              const err = await response.json();
+              errorMsg = err.detail || errorMsg;
+            } catch {}
+          }
           callbacks.onError?.(errorMsg);
           reject(new Error(errorMsg));
           return;
