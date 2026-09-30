@@ -1,0 +1,44 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. Run Backend (FastAPI)",
+      "type": "shell",
+      "command": "\"${workspaceFolder}/backend/venv/Scripts/python.exe\" run.py",
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "lumiq",
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "2. Run Frontend (Vite)",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "lumiq",
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Start LUMIQ AI (Both Backend & Frontend)",
+      "dependsOn": [
+        "1. Run Backend (FastAPI)",
+        "2. Run Frontend (Vite)"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}
