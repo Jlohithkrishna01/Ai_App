@@ -19,11 +19,25 @@ class BaseAIProvider(ABC):
     ) -> AsyncGenerator[str, None]:
         pass
 
+def _format_api_error(status_code: int, raw_bytes: bytes) -> str:
+    try:
+        data = json.loads(raw_bytes.decode("utf-8", errors="ignore"))
+        msg = data.get("error", {}).get("message") or data.get("detail")
+        if msg:
+            return f"{msg} (HTTP {status_code})"
+    except Exception:
+        pass
+    return f"HTTP error {status_code}"
+
 class GroqOpenAIProvider(BaseAIProvider):
-    def __init__(self, api_key: str, base_url: str = settings.GROQ_BASE_URL, default_model: str = settings.GROQ_DEFAULT_MODEL):
-        self.api_key = api_key
+    def __init__(self, api_key: Optional[str] = None, base_url: str = settings.GROQ_BASE_URL, default_model: str = settings.GROQ_DEFAULT_MODEL):
+        self._api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.default_model = default_model
+
+    @property
+    def api_key(self) -> str:
+        return (self._api_key or settings.GROQ_API_KEY or "").strip()
 
     async def stream_chat(
         self,
@@ -32,10 +46,15 @@ class GroqOpenAIProvider(BaseAIProvider):
         temperature: float = 0.7,
         max_tokens: int = 4096
     ) -> AsyncGenerator[str, None]:
+        active_key = self.api_key
+        if not active_key:
+            yield "⚠️ **AI Service Error**: `GROQ_API_KEY` is not configured. Please add your Groq API key in your `backend/.env` file and restart the backend."
+            return
+
         selected_model = model or self.default_model
         endpoint = f"{self.base_url}/chat/completions"
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {active_key}",
             "Content-Type": "application/json",
             "User-Agent": "LUMIQ-AI/1.0.0 (FastAPI-Client)"
         }
@@ -54,13 +73,13 @@ class GroqOpenAIProvider(BaseAIProvider):
                         err_body = await response.aread()
                         logger.error(f"Groq API error {response.status_code}: {err_body.decode('utf-8', errors='ignore')}")
                         # If primary model failed, try fallback model if different
-                        if selected_model != settings.GROQ_FALLBACK_MODEL:
+                        if selected_model != settings.GROQ_FALLBACK_MODEL and settings.GROQ_FALLBACK_MODEL:
                             logger.info(f"Retrying with fallback model {settings.GROQ_FALLBACK_MODEL}")
                             payload["model"] = settings.GROQ_FALLBACK_MODEL
                             async with client.stream("POST", endpoint, json=payload, headers=headers) as fallback_resp:
                                 if fallback_resp.status_code != 200:
                                     fallback_err = await fallback_resp.aread()
-                                    yield f"[AI Service Error: {fallback_resp.status_code}]"
+                                    yield f"\n\n⚠️ **AI Service Error**: {_format_api_error(fallback_resp.status_code, fallback_err)}"
                                     return
                                 async for line in fallback_resp.aiter_lines():
                                     line = line.strip()
@@ -74,7 +93,8 @@ class GroqOpenAIProvider(BaseAIProvider):
                                         except Exception:
                                             continue
                             return
-                        yield f"[AI Service Error: status {response.status_code}]"
+
+                        yield f"\n\n⚠️ **AI Service Error**: {_format_api_error(response.status_code, err_body)}"
                         return
 
                     async for line in response.aiter_lines():
@@ -90,17 +110,29 @@ class GroqOpenAIProvider(BaseAIProvider):
                                     yield token
                             except Exception:
                                 continue
+
+            except httpx.ConnectError as ce:
+                logger.exception(f"Connection error to AI service: {ce}")
+                yield "\n\n⚠️ **Network Error**: Unable to reach AI servers (DNS or connection error). Please check your internet connection."
+            except httpx.TimeoutException as te:
+                logger.exception(f"Timeout connecting to AI service: {te}")
+                yield "\n\n⚠️ **Timeout Error**: The AI service did not respond in time. Please try again."
             except Exception as e:
                 logger.exception(f"Exception during stream: {e}")
-                yield f"\n\n[Error communicating with AI service: {str(e)}]"
+                yield f"\n\n⚠️ **AI Service Error**: {str(e)}"
 
 class AIService:
     def __init__(self):
-        # Default provider is GroqOpenAIProvider
-        self.provider: BaseAIProvider = GroqOpenAIProvider(api_key=settings.GROQ_API_KEY)
+        self._provider: Optional[BaseAIProvider] = None
+
+    @property
+    def provider(self) -> BaseAIProvider:
+        if self._provider is None:
+            self._provider = GroqOpenAIProvider()
+        return self._provider
 
     def set_provider(self, provider: BaseAIProvider):
-        self.provider = provider
+        self._provider = provider
 
     def build_system_prompt(
         self,

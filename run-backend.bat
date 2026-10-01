@@ -4,5 +4,15 @@ cd /d "%~dp0backend"
 echo ==============================================
 echo   Starting LUMIQ AI Backend Server...
 echo ==============================================
-".\venv\Scripts\python.exe" run.py
+if exist ".\venv\Scripts\python.exe" (
+    ".\venv\Scripts\python.exe" run.py
+) else (
+    where python >nul 2>nul
+    if %ERRORLEVEL% equ 0 (
+        python run.py
+    ) else (
+        echo [ERROR] Python not found. Please install Python 3.10+ and add it to PATH.
+        pause
+    )
+)
 pause

@@ -1,18 +1,33 @@
 import os
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Search and load .env file from possible locations
+env_locations = [
+    BASE_DIR / ".env",
+    BASE_DIR.parent / ".env",
+    Path.cwd() / ".env",
+    Path.cwd() / "backend" / ".env"
+]
+loaded_env_path = None
+for loc in env_locations:
+    if loc.exists():
+        load_dotenv(dotenv_path=loc, override=True)
+        loaded_env_path = loc
+        break
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "LUMIQ AI"
     VERSION: str = "1.0.0"
     API_PREFIX: str = "/api"
 
-    # Database
+    # Database: Default configured with local MySQL password (123456)
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "mysql+pymysql://root:password@127.0.0.1:3306/successfully?charset=utf8mb4"
+        "mysql+pymysql://root:123456@127.0.0.1:3306/successfully?charset=utf8mb4"
     )
 
     # Groq AI
@@ -41,12 +56,14 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "*"
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ]
 
-    class Config:
-        env_file = ".env"
-        extra = "allow"
+    model_config = SettingsConfigDict(
+        env_file=str(loaded_env_path) if loaded_env_path else ".env",
+        extra="allow"
+    )
 
 settings = Settings()
 

@@ -1,10 +1,17 @@
 import sys
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Ensure backend directory is in sys.path regardless of where script is called
 backend_dir = Path(__file__).resolve().parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
+
+# Proactively load .env from backend_dir or project root
+for candidate in [backend_dir / ".env", backend_dir.parent / ".env"]:
+    if candidate.exists():
+        load_dotenv(candidate, override=True)
+        break
 
 import uvicorn
 

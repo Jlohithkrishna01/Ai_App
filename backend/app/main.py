@@ -20,8 +20,11 @@ logger = logging.getLogger("lumiq")
 async def lifespan(app: FastAPI):
     # Initialize DB tables
     logger.info("Initializing database schema...")
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized successfully.")
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database initialized successfully.")
+    except Exception as e:
+        logger.error(f"Failed to synchronize database tables: {e}")
     yield
     logger.info("Application shutting down...")
 
@@ -53,11 +56,19 @@ app.include_router(user_settings.router, prefix=settings.API_PREFIX)
 
 @app.get("/api/health")
 def healthcheck():
+    db_status = "connected"
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "connected" else "degraded",
         "app": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "database": "connected"
+        "database": db_status
     }
 
 @app.exception_handler(Exception)
